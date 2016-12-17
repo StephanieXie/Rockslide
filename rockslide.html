@@ -1,0 +1,429 @@
+<!-- 
+< Stephanie Xie >
+< December 15, 2016 >
+< CSC 240 >
+< Final Project >
+< Credits to https://threejs.org/examples/misc_controls_pointerlock.html for Pointer Lock syntax > 
+-->
+
+<!DOCTYPE html>
+<head>
+<title>WebGL Animated Game: Rockslide!</title>
+<meta charset="utf-8"/> 
+
+<style>
+    html, head {
+        width: 100%;
+        height: 100%;
+    }
+
+    head {
+        background-color: #ffffff;
+        margin: 0;
+        overflow: hidden;
+        font-family: arial;
+    }
+
+    #blocker {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+    }
+
+    #instructions {
+        width: 100%;
+        height: 100%;
+
+        display: -webkit-box;
+        display: -moz-box;
+        display: box;
+
+        -webkit-box-orient: horizontal;
+        -moz-box-orient: horizontal;
+        box-orient: horizontal;
+
+        -webkit-box-pack: center;
+        -moz-box-pack: center;
+        box-pack: center;
+
+        -webkit-box-align: center;
+        -moz-box-align: center;
+        box-align: center;
+
+        color: #ffffff;
+        text-align: center;
+
+        cursor: pointer;
+    }
+</style>
+<div id="blocker">
+    <div id="instructions">
+        <span style="font-size:60px">CLICK TO PLAY</span>
+        <br />
+        <br />
+        (A, D = Move left/right,  W, S = Raise/Lower arm,  ESC = Pause)
+    </div>
+</div>
+
+<script src="js/three.min.js"></script>
+<script src="js/KeyboardState.js"></script>
+<script src="js/PointerLockControls.js"></script>
+<script>
+    var scene, camera, renderer;
+
+    var canvas;
+
+    var keyboard = new KeyboardState();
+
+    var controlsEnabled = false;
+
+    var clock;
+    var elapsedTime = 0;
+
+    //----------------------------------------------------------------------------------
+    // Pointer Lock
+
+    var havePointerLock = 'pointerLockElement' in document || 'mozPointerLockElement' in document || 'webkitPointerLockElement' in document;
+
+    var blocker = document.getElementById('blocker');
+    var instructions = document.getElementById('instructions');
+
+    var element = document.head;
+
+    var pointerlockchange = function(event) {
+        if (document.pointerLockElement === element || document.mozPointerLockElement === element || document.webkitPointerLockElement === element) {
+            if (!clock) clock = new THREE.Clock(false);
+
+            controlsEnabled = true;
+            clock.start();
+
+            blocker.style.display = 'none';
+        } else {
+            controlsEnabled = false;
+            clock.stop();
+            elapsedTime += clock.getElapsedTime();
+
+            blocker.style.display = '-webkit-box';
+            blocker.style.display = '-moz-box';
+            blocker.style.display = 'box';
+
+            instructions.style.display = '';
+        }
+    };
+
+    // Hook pointer lock state change events
+    document.addEventListener('pointerlockchange', pointerlockchange, false);
+    document.addEventListener('mozpointerlockchange', pointerlockchange, false);
+    document.addEventListener('webkitpointerlockchange', pointerlockchange, false);
+
+    document.addEventListener('click', function(event) {
+        // Ask the browser to lock the pointer
+        element.requestPointerLock = element.requestPointerLock || element.mozRequestPointerLock || element.webkitRequestPointerLock;
+        element.requestPointerLock();
+    });
+
+    //----------------------------------------------------------------------------------
+    // Create the scene. This function is called once, as soon as the page loads.
+    // The renderer has already been created before this function is called.
+
+    var worldSize = 1000;
+    var rocks = [];
+    var rockRadius = 5; 
+    var rockRange = new THREE.Vector3(worldSize/10, 4.5, worldSize);
+
+    var creeper, creeperRightArmPivot, creeperLeftArmPivot, creeperRightLegPivot, creeperLeftLegPivot;
+    
+    function createWorld() {    
+        renderer.setClearColor(0);
+        scene = new THREE.Scene(); 
+    
+        // camera
+        camera = new THREE.PerspectiveCamera(45, (canvas.width/canvas.height), 1, 500);
+        camera.position.set(0, 10, 27);
+
+        // light source
+        var hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1 ); 
+        scene.add(hemiLight);
+
+        // sky
+        var sky = new THREE.Mesh(new THREE.PlaneGeometry(10000, 10000), new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/sky.jpg')}));
+        sky.rotation.z = Math.PI/2;
+        sky.position.z = -400;
+        scene.add(sky);
+
+        // ground
+        var ground = new THREE.Mesh(new THREE.PlaneGeometry(worldSize/10, worldSize), new tile(10, 30, 'textures/ground.jpg'));
+        ground.rotation.x = Math.PI/2;
+        scene.add(ground);
+
+        // boulders
+        var numrocks = 25;
+        for (var i = 0; i < numrocks; i++) {
+            var rockMesh = new THREE.Mesh(new THREE.SphereGeometry(rockRadius), new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/rock.jpg')}));
+            scene.add(rockMesh);
+            rockMesh.position.set(rockRange.x/2 - rockRange.x * Math.random(), rockRange.y, rockRange.z/2 - rockRange.z * Math.random());
+            rocks.push(rockMesh);
+        }
+
+        // creeper
+        creeper = createCreeper();
+        scene.add(creeper);
+        creeper.position.y = 1.6;
+    }
+
+    //----------------------------------------------------------------------------------
+    // Blender object
+
+    function createCreeper() {
+        creeper = new THREE.Object3D();
+        creeper.rotation.y = Math.PI;
+
+        // head
+        var loader = new THREE.JSONLoader(); 
+        loader.load('blender/creeperHead.json', function(geometry) {
+            var creeperHeadMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/creeper.jpg')}));
+            creeper.add(creeperHeadMesh); 
+        });
+
+        // body
+        loader.load('blender/creeperBody.json', function(geometry) {
+            var creeperBody = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/creeper.jpg')}));
+            creeper.add(creeperBody); 
+        });
+
+        //---------------------- ARMS ----------------------
+
+        // right arm
+        creeperRightArmPivot = new THREE.Object3D();
+        creeperRightArmPivot.position.set(0, 3, 0);
+        creeperRightArmPivot.rotation.x = Math.PI;
+        creeper.add(creeperRightArmPivot);
+
+        loader.load('blender/creeperRightArm.json', function(geometry) {
+            var creeperRightArmMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/creeper.jpg')}));
+            creeperRightArmMesh.position.set(0, -1, 0);
+            creeperRightArmPivot.add(creeperRightArmMesh); 
+        });
+
+        // left arm
+        creeperLeftArmPivot = new THREE.Object3D();
+        creeperLeftArmPivot.position.set(0, 3, 0);
+        creeperLeftArmPivot.rotation.x = Math.PI;
+        creeper.add(creeperLeftArmPivot);
+
+        loader.load('blender/creeperLeftArm.json', function(geometry) {
+            var creeperLeftArmMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/creeper.jpg')}));
+            creeperLeftArmMesh.position.set(0, -1, 0);
+            creeperLeftArmPivot.add(creeperLeftArmMesh); 
+        });
+
+        //---------------------- LEGS ----------------------
+
+        // right leg
+        creeperRightLegPivot = new THREE.Object3D();
+        creeper.add(creeperRightLegPivot);
+        creeperRightLegPivot.position.set(0, 1, 0);
+        creeperRightLegPivot.rotation.x = Math.PI/4;
+
+        loader.load('blender/creeperRightLeg.json', function(geometry) {
+            var creeperRightLegMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/creeper.jpg')}));
+            creeperRightLegMesh.position.set(0, -1, 0);
+            creeperRightLegPivot.add(creeperRightLegMesh); 
+        });
+
+        // left leg
+        creeperLeftLegPivot = new THREE.Object3D();
+        creeper.add(creeperLeftLegPivot);
+        creeperLeftLegPivot.position.set(0, 1, 0);
+        creeperLeftLegPivot.rotation.x = -Math.PI/4;
+
+        loader.load('blender/creeperLeftLeg.json', function(geometry) {
+            var creeperLeftLegMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({map: new THREE.TextureLoader().load('textures/creeper.jpg')}));
+            creeperLeftLegMesh.position.set(0, -1, 0);
+            creeperLeftLegPivot.add(creeperLeftLegMesh); 
+        });
+
+        //--------------------------------------------------
+
+        return creeper;
+    }
+
+    //----------------------------------------------------------------------------------
+    // Helper functions
+
+    // get current date
+    function getDate() {
+        var today = new Date();
+        var year = today.getFullYear();
+        var month = today.getMonth();
+        var date = today.getDate();
+        var fullDate = (month + "/" + date + "/" + year);
+
+        return fullDate;
+    }
+
+    var record = [];
+    var records = [['NAME                   ' + 'TIME (SEC)                 ' + '           DATE']];
+    function recordScore(time, date) {
+        var name = prompt("Please enter your name");
+
+        if (name != null) {
+            record.push(name + "                           " + time + "                        " + "      " + date);
+            records.push(record);
+
+            alert(records.join('\n'));  // display scoreboard
+        }
+    }
+
+    // tiling textures
+    function tile(u, v, texture) {
+        var texture = new THREE.TextureLoader().load(texture);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(u, v);
+        return new THREE.MeshBasicMaterial({map: texture, side: THREE.DoubleSide});
+    }
+
+    var legRotate = false;
+    var legRotationAngle = 0;
+    function moveLegs() {
+        if (!legRotate) {   // leg rotates one way           
+            creeperRightLegPivot.rotation.x -= 0.1;
+            creeperLeftLegPivot.rotation.x += 0.1;
+            legRotationAngle += 0.1;
+        }  
+
+        if (legRotate) {    // leg rotates opposite way            
+            creeperRightLegPivot.rotation.x += 0.1;
+            creeperLeftLegPivot.rotation.x -= 0.1;
+            legRotationAngle += 0.1;
+        }
+        // don't let leg rotate more than 45 deg either way
+        // 90 deg to get full range of motion (set init right leg rotation to 45 deg & left leg to -45 deg so they would start at opposite ends and swing toward each other)
+        if (legRotationAngle > Math.PI/2) {            
+            legRotate = !legRotate;
+            legRotationAngle = 0;
+        }
+    }
+
+    //----------------------------------------------------------------------------------
+    // Keyboard update
+
+    var faceLeft = false;
+    var faceRight = false;
+    var canRaiseArms = true;
+    var canLowerArms = true;
+    function update() {
+        keyboard.update();
+
+        if (keyboard.pressed("A")) {    // move to the left          
+            if (!faceLeft) creeper.rotation.y = -Math.PI/2;
+            
+            creeper.translateZ(0.2);
+            moveLegs();
+            faceLeft = true;
+            faceRight = false;
+        };
+
+        if (keyboard.pressed("D")) {    // move to the right 
+            if (!faceRight) creeper.rotation.y = Math.PI/2;
+            
+            creeper.translateZ(0.2);
+            moveLegs();
+            faceRight = true;
+            faceLeft = false;
+        };
+
+        if (keyboard.up("A") || keyboard.up("D")) { // return to resting position
+            creeper.rotation.y = Math.PI;
+            faceLeft = false;
+            faceRight = false;
+        }
+
+        if (keyboard.pressed("W")) {   // lift arms
+            canLowerArms = true;
+            
+            if (canRaiseArms) {
+                creeperRightArmPivot.rotation.x -= 0.1;
+                creeperLeftArmPivot.rotation.x -= 0.1;
+            }
+
+            if (creeperRightArmPivot.rotation.x < Math.PI/2) canRaiseArms = false;  // can't raise arms by more than 90 deg
+        }
+
+        if (keyboard.pressed("S")) { // lower arms
+            canRaiseArms = true;
+
+            if (canLowerArms) {
+                creeperRightArmPivot.rotation.x += 0.1;
+                creeperLeftArmPivot.rotation.x += 0.1;
+            }
+
+            if (creeperRightArmPivot.rotation.x > Math.PI) canLowerArms = false;    // can't lower arms behind body
+        }
+    }
+
+    //----------------------------------------------------------------------------------
+
+    // Render the scene. This is called for each frame of the animation.
+    function render() {
+        requestAnimationFrame(render);
+
+        if (controlsEnabled) {
+            update();
+            //rockslide
+            for (var i = 0; i < rocks.length; i++) {
+                // loop rockslide
+                if (rocks[i].position.z > rockRange.z/2) {
+                    rocks[i].position.x = rockRange.x/2 - rockRange.x * Math.random();
+                    rocks[i].position.y = rockRange.y;
+                    rocks[i].position.z = -rockRange.z/2;  
+                } else {
+                    // detect collision
+                    if (rocks[i].position.distanceTo(creeper.position) < 1.3 * rockRadius) {
+                        controlsEnabled = false;
+
+                        clock.stop();
+                        elapsedTime += clock.getElapsedTime();
+                        seconds = Math.round(elapsedTime);
+
+                        alert("GAME OVER\nYou lasted: " + seconds + " seconds")
+                        recordScore(Math.round(elapsedTime), getDate());
+                        document.location.reload(); // refresh page 
+                    }
+                    rocks[i].position.z += 1;
+                    rocks[i].rotation.x += 0.25;
+                }
+            }
+        }
+        renderer.render(scene, camera);
+    }
+
+    //----------------------------------------------------------------------------------
+
+    // The init() function is called by the onload event when the document has loaded.
+    function init() {
+        try {
+            canvas = document.getElementById("glcanvas");
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            renderer = new THREE.WebGLRenderer( { canvas: canvas, antialias: true} );
+        }
+        catch (e) {
+            document.getElementById("canvas-holder").innerHTML = "<h3><b>WebGL is not available.</b><h3>";
+            return;
+        }
+        // create world and render scene
+        createWorld();
+        render();
+    }
+
+</script>
+
+</head>
+<body onload="init()">
+<div id="canvas-holder">
+    <canvas id="glcanvas" width="600" height="300"></canvas>
+</div>
+</body>
+</html>
